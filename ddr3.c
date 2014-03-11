@@ -276,7 +276,7 @@ void ddr3_test_opt() {
 }
 
 
-void dump_ddr3(unsigned int address, unsigned int len) {
+void dump_ddr3(unsigned int address, unsigned int len, int ofd) {
   unsigned int readback[DDR3_FIFODEPTH];
   int i;
   int burstaddr = 0;
@@ -337,6 +337,9 @@ void dump_ddr3(unsigned int address, unsigned int len) {
       printf( "%02x%02x%02x%02x%02x%02x%02x%02x ", 
 	      readback[i] & 0xFF, (readback[i] >> 8) & 0xFF, (readback[i] >> 16) & 0xFF, (readback[i] >> 24) & 0xFF,
 	      readback[i+1] & 0xFF, (readback[i+1] >> 8) & 0xFF, (readback[i+1] >> 16) & 0xFF, (readback[i+1] >> 24) & 0xFF );
+      if( ofd > 0 ) {
+	write( ofd, &(readback[i]), 8 );
+      }
     }
     burstaddr += DDR3_FIFODEPTH;
     cs0[FPGA_MAP( FPGA_W_DDR3_P2_LADR + offset )] = ((burstaddr * 4) & 0xFFFF);
