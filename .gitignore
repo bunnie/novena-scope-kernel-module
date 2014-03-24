@@ -29,4 +29,16 @@
 
 # Output executables
 chee-z-print
+novena-scope
+devmem2
 
+# vim swapfiles
+*.swp
+*.swo
+
+# Kernel compile files
+*.cmd
+.tmp_versions
+*.symvers
+*.mod.c
+modules.order
