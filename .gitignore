@@ -28,7 +28,7 @@
 *.bin
 
 # Output executables
-cheezprint
+chee-z-print
 novena-scope
 devmem2
 generate
