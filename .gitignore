@@ -28,5 +28,18 @@
 *.bin
 
 # Output executables
-chee-z-print
+cheezprint
+novena-scope
+devmem2
+generate
 
+# vim swapfiles
+*.swp
+*.swo
+
+# Kernel compile files
+*.cmd
+.tmp_versions
+*.symvers
+*.mod.c
+modules.order
