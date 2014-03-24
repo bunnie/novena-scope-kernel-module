@@ -18,7 +18,7 @@ MY_LIBS += `pkg-config libnl-3.0 --libs` `pkg-config libnl-genl-3.0 --libs`
 all: $(OBJECTS) $(OBJECTS_devmem2) $(OBJECTS_cheezprint) $(OBJECTS_generate)
 	$(CC) $(LIBS) $(LDFLAGS) $(OBJECTS) $(MY_LIBS) -o $(EXEC)
 	$(CC) $(LIBS) $(LDFLAGS) $(OBJECTS_devmem2) $(MY_LIBS) -o devmem2
-	$(CC) $(LIBS) $(LDFLAGS) $(OBJECTS_cheezprint) $(MY_LIBS) -o cheezprint
+	$(CC) $(LIBS) $(LDFLAGS) $(OBJECTS_cheezprint) $(MY_LIBS) -o chee-z-print
 	$(CC) $(LIBS) $(LDFLAGS) $(OBJECTS_generate) $(MY_LIBS) -o generate
 
 clean:
