@@ -22,22 +22,18 @@
 
 /* list of valid commands */
 enum kosagi_fpga_commands {
-	KOSAGI_C_UNSPEC,
-	KOSAGI_C_ECHO,
-	KOSAGI_C_READ_4K,
-	KOSAGI_C_READ_4K_RESPONSE,
-	KOSAGI_C_WRITE_4K,
-	KOSAGI_C_WRITE_4K_WITH_ADDR,
-	__KOSAGI_C_MAX,
+        KOSAGI_CMD_UNSPEC,
+	KOSAGI_CMD_SEND,
+	KOSAGI_CMD_READ,
+	__KOSAGI_CMD_MAX,
 };
 
 /* list of valid command attributes */
 enum kosagi_fpga_attributes {
-	KOSAGI_A_NONE,
-	KOSAGI_A_MESSAGE,
-	KOSAGI_A_4K_DATA,
-        KOSAGI_A_4K_ADDRESS,
-	__KOSAGI_A_MAX,
+	KOSAGI_ATTR_NONE,
+	KOSAGI_ATTR_FPGA_DATA,
+	KOSAGI_ATTR_MESSAGE,
+	__KOSAGI_ATTR_MAX,
 };
 
 
@@ -174,12 +170,13 @@ err:
 static int print_result(struct nl_msg *msg, void *arg)
 {
 	struct nlmsghdr *hdr = nlmsg_hdr(msg);
-	struct nlattr *attr = nlmsg_attrdata(hdr, KOSAGI_A_MESSAGE);
+	struct nlattr *attr = nlmsg_attrdata(hdr, KOSAGI_ATTR_MESSAGE);
 	char *str = nla_get_string(attr);
 	printf("Received message: %s\n", str);
 	return NL_OK;
 }
 
+/*
 int fpga_receive_echo(struct fpga_connection *conn)
 {
 	int ret;
@@ -203,11 +200,11 @@ int fpga_send_echo(struct fpga_connection *conn, char *message)
 	int ret;
 	struct nl_msg *msg;
 
-	msg = fpga_alloc_msg(conn, KOSAGI_C_ECHO);
+	msg = fpga_alloc_msg(conn, KOSAGI_CMD_ECHO);
 	if (!msg)
 		return -1;
 
-	ret = nla_put_string(msg, KOSAGI_A_MESSAGE, message);
+	ret = nla_put_string(msg, KOSAGI_ATTR_MESSAGE, message);
 	if (ret < 0) {
 		fprintf(stderr, "Unable to add message string: %s\n",
 				nl_geterror(ret));
@@ -225,6 +222,7 @@ out:
 	nlmsg_free(msg);
 	return ret;
 }
+*/
 
 int fpga_read_4k(struct fpga_connection *conn)
 {
@@ -235,7 +233,7 @@ int fpga_read_4k(struct fpga_connection *conn)
 	void *data;
 	int datalen;
 
-	msg = fpga_alloc_msg(conn, KOSAGI_C_READ_4K);
+	msg = fpga_alloc_msg(conn, KOSAGI_CMD_READ);
 	if (!msg)
 		return -1;
 
@@ -255,7 +253,7 @@ int fpga_read_4k(struct fpga_connection *conn)
 	}
 	fprintf(stderr, "Received %d bytes\n", ret);
 
-	ret = get_attr(hdr, KOSAGI_A_4K_DATA, &data, &datalen);
+	ret = get_attr(hdr, KOSAGI_ATTR_FPGA_DATA, &data, &datalen);
 	print_hex(data, datalen);
 	fprintf(stderr, "Data length: %d\n", datalen);
 
@@ -263,16 +261,17 @@ int fpga_read_4k(struct fpga_connection *conn)
 	return ret;
 }
 
+/*
 int fpga_write_4k(struct fpga_connection *conn, void *data)
 {
 	int ret;
 	struct nl_msg *msg;
 
-	msg = fpga_alloc_msg(conn, KOSAGI_C_WRITE_4K);
+	msg = fpga_alloc_msg(conn, KOSAGI_CMD_WRITE_4K);
 	if (!msg)
 		return -1;
 
-	ret = nla_put(msg, KOSAGI_A_4K_DATA, sizeof(data), data);
+	ret = nla_put(msg, KOSAGI_ATTR_4K_DATA, sizeof(data), data);
 	if (ret < 0) {
 		fprintf(stderr, "Unable to add data: %s\n", nl_geterror(ret));
 		goto out;
@@ -296,17 +295,17 @@ int fpga_write_4k_addr(struct fpga_connection *conn,
 	int ret;
 	struct nl_msg *msg;
 
-	msg = fpga_alloc_msg(conn, KOSAGI_C_WRITE_4K_WITH_ADDR);
+	msg = fpga_alloc_msg(conn, KOSAGI_CMD_WRITE_4K_WITH_ADDR);
 	if (!msg)
 		return -1;
 
-	ret = nla_put_u32(msg, KOSAGI_A_4K_ADDRESS, addr);
+	ret = nla_put_u32(msg, KOSAGI_ATTR_4K_ADDRESS, addr);
 	if (ret < 0) {
 		fprintf(stderr, "Unable to add address: %s\n", nl_geterror(ret));
 		goto out;
 	}
 
-	ret = nla_put(msg, KOSAGI_A_4K_DATA, sizeof(data), data);
+	ret = nla_put(msg, KOSAGI_ATTR_4K_DATA, sizeof(data), data);
 	if (ret < 0) {
 		fprintf(stderr, "Unable to add data: %s\n", nl_geterror(ret));
 		goto out;
@@ -323,3 +322,4 @@ out:
 	nlmsg_free(msg);
 	return ret;
 }
+*/
