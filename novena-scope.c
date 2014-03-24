@@ -14,7 +14,9 @@
 #include <sys/ioctl.h>
 
 #include "ad9520.h"
+#include "dac101c085.h"
 #include "adc08d1020.h"
+#include "lmh6518.h"
 #include "ddr3.h"
 #include "novena-scope.h"
 #include "userspace.h"
@@ -113,6 +115,8 @@ void print_usage(char *progname) {
         "\t-adc_default                 set ADC to defaults\n"
         "\t-adc_dev                     dev use only\n"
 	"\t-burstread                   do a burst read test\n"
+	"\t-afe_offset 0x<code>         set offset to digital hex <code> value\n"
+	"\t-afe_set <filt> <atten>      set AFE preamp, filt 20-750MHz (0=inf), atten 0-20, 20 most attenuative\n"
 	 "", progname);
 }
 
@@ -664,6 +668,7 @@ void power_off_expansion() {
 int main(int argc, char **argv) {
   unsigned int a1, a2;
   int infile = -1; 
+  int atten;
 
   char *prog = argv[0];
   argv++;
@@ -704,8 +709,8 @@ int main(int argc, char **argv) {
     else if(!strcmp(*argv, "-ddr3dump")) { // dump DDR3 to screen
       argc--;
       argv++;
-      if( argc != 2 ) {
-	printf( "usage -ddr3dump <address> <count>\n" );
+      if( argc < 2 ) {
+	printf( "usage -ddr3dump <address> <count> [file]\n" );
 	return 1;
       }
       a1 = strtoul(*argv, NULL, 16);
@@ -714,7 +719,18 @@ int main(int argc, char **argv) {
       a2 = strtoul(*argv, NULL, 16);
       argc--;
       argv++;
-      dump_ddr3(a1, a2);
+      if( argc == 1 ) {
+	infile = open(*argv, O_RDWR | O_CREAT, 0666 );
+	if( infile == -1 ) {
+	  printf("Unable to open %s\n", *argv );
+	  return 1;
+	}
+	argc--;
+	argv++;
+	dump_ddr3(a1, a2, infile);
+      } else {
+	dump_ddr3(a1, a2, -1);
+      }
     }
     else if(!strcmp(*argv, "-ddr3load")) { // load DDR3 with values from file (for romulation)
       argc--;
@@ -803,6 +819,32 @@ int main(int argc, char **argv) {
       argc--;
       argv++;
       burstread();
+    } else if(!strcmp(*argv, "-afe_offset")) { 
+      argc--;
+      argv++;
+      if( argc != 1 ) {
+	printf( "usage -afe_offset 0x<code>\n" );
+	return 1;
+      }
+      a1 = strtoul(*argv, NULL, 16);
+      argc--;
+      argv++;
+      afe_offset(a1);
+    } else if(!strcmp(*argv, "-afe_set")) {
+      argc--;
+      argv++;
+      if( argc != 2 ) {
+	printf( "usage -afe_set <filt> <atten>\n" );
+	return 1;
+      }
+      a1 = strtoul(*argv, NULL, 10);
+      argc--;
+      argv++;
+      a2 = strtoul(*argv, NULL, 10);
+      argc--;
+      argv++;
+      atten = 0 - (int)a2;
+      afe_setgain(1, a1, 0, atten);
     } else {
       print_usage(prog);
       return 1;

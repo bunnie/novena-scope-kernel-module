@@ -5,6 +5,6 @@
 
 void ddr3_test();
 void ddr3_test_opt();
-void dump_ddr3(unsigned int address, unsigned int len);
+void dump_ddr3(unsigned int address, unsigned int len, int ofd);
 void ddr3load(int ifd, int verify);
 void ddr3_burst_read();

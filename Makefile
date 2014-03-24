@@ -1,4 +1,4 @@
-SOURCES=novena-scope.c gpio.c eim.c ad9520.c adc08d1020.c ddr3.c userspace.c
+SOURCES=novena-scope.c gpio.c eim.c ad9520.c adc08d1020.c ddr3.c userspace.c dac101c085.c lmh6518.c
 OBJECTS=$(SOURCES:.c=.o)
 EXEC=novena-scope
 MY_CFLAGS += -Wall -O0 -g `pkg-config libnl-3.0 --cflags` `pkg-config libnl-genl-3.0 --cflags`
