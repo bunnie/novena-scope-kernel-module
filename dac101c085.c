@@ -94,7 +94,6 @@ int dac101c085_write_byte( unsigned short data, dacType dac ) {
 int dac101c085_read_byte( unsigned short *data, dacType dac ) {
   int i2cfd;
   int slave_address = -1;
-  unsigned char buff[2];
 
   struct i2c_msg msg[2];
 		

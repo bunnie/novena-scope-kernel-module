@@ -180,7 +180,7 @@ static int print_result(struct nl_msg *msg, void *arg)
 	return NL_OK;
 }
 
-static int fpga_receive_echo(struct fpga_connection *conn)
+int fpga_receive_echo(struct fpga_connection *conn)
 {
 	int ret;
 	struct nl_cb *cb = NULL;
@@ -198,7 +198,7 @@ static int fpga_receive_echo(struct fpga_connection *conn)
 	return ret;
 }
 
-static int fpga_send_echo(struct fpga_connection *conn, char *message)
+int fpga_send_echo(struct fpga_connection *conn, char *message)
 {
 	int ret;
 	struct nl_msg *msg;
@@ -263,7 +263,7 @@ int fpga_read_4k(struct fpga_connection *conn)
 	return ret;
 }
 
-static int fpga_write_4k(struct fpga_connection *conn, void *data)
+int fpga_write_4k(struct fpga_connection *conn, void *data)
 {
 	int ret;
 	struct nl_msg *msg;
@@ -290,7 +290,7 @@ out:
 	return ret;
 }
 
-static int fpga_write_4k_addr(struct fpga_connection *conn,
+int fpga_write_4k_addr(struct fpga_connection *conn,
 		void *data, int addr)
 {
 	int ret;
@@ -323,35 +323,3 @@ out:
 	nlmsg_free(msg);
 	return ret;
 }
-
-#if 0
-int main(int argc, char **argv)
-{
-	struct fpga_connection *conn;
-	char *message = "Hi there";
-	uint8_t data[DATA_SIZE];
-	int i;
-
-	conn = fpga_open_connection(FAMILY_NAME);
-	if (!conn)
-		return -1;
-
-	fpga_send_echo(conn, message);
-	fpga_receive_echo(conn);
-
-	fprintf(stderr, "Going to receive data...\n");
-	fpga_read_4k(conn);
-
-	fprintf(stderr, "Going to send data...\n");
-	for (i = 0; i < sizeof(data); i++)
-		data[i] = i;
-	fpga_write_4k(conn, data);
-
-	fprintf(stderr, "Going to send data to a specific address...\n");
-	for (i = 0; i < sizeof(data); i++)
-		data[i] = i;
-	fpga_write_4k_addr(conn, data, 0x0C04F000);
-
-	return 0;
-}
-#endif

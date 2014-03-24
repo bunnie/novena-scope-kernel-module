@@ -23,3 +23,10 @@
 *.hex
 
 *~
+
+# Scope logs
+*.bin
+
+# Output executables
+chee-z-print
+

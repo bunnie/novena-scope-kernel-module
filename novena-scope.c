@@ -399,17 +399,13 @@ void setup_fpga_cs1() {
 
 
 int analysis1() {
-  unsigned int *cs1_mem;
   int memfd;
-  volatile unsigned long long *cs1;
-  volatile unsigned long long testWord;
   int i2cfd;
   char i2cbuf[256]; // meh too big but meh
   int i2c_read;
   int address = 0x1E; // device address of the FPGA on I2C bus 2 (hardware interface I2C3)
   int i;
   unsigned int record;
-  unsigned int last;
   unsigned int repeat;
   struct fpga_connection *conn;
   
@@ -431,9 +427,6 @@ int analysis1() {
     return 0;
   }
   
-  cs1_mem = mmap(0, 0xffff, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0x0C04F000 );
-  cs1 = (volatile unsigned long long *)cs1_mem;
-
   // run a quick test to make sure the interface is working
   printf( "interface test: (should see 0xaa the 0x55)\n" );
   i2cbuf[0] = 0x0; i2cbuf[1] = 0xAA;
@@ -475,7 +468,6 @@ int analysis1() {
     return -1;
   fpga_read_4k(conn);
 
-  last = 0;
   repeat = 0;
   // now read back from the log
   for( i = 0; i < 1024; i++ ) { // the log is 1024 entries long
@@ -513,7 +505,6 @@ int analysis1() {
 	
 	printf( " %01x ", (record >> 16) & 0x7 );
 	printf( " %04x\n", record & 0xFFFF );
-	last = record;
 	repeat = 0;
       } else {
 	repeat++;
@@ -533,7 +524,6 @@ int burstread() {
   int i2c_read;
   int address = 0x1E; // device address of the FPGA on I2C bus 2 (hardware interface I2C3)
   unsigned int record;
-  unsigned int last;
   unsigned int repeat;
   int i;
 
@@ -557,7 +547,7 @@ int burstread() {
   if( fd < 0 ) {
     perror("Unable to open /dev/mem");
     fd = 0;
-    return;
+    return -1;
   }
 
   mem_32 = mmap(0, 0xffff, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0x08040000);
@@ -568,7 +558,7 @@ int burstread() {
   buf = calloc(256 * 1024 * 1024 / 4, 4);
   if( buf == NULL ) {
     printf( "Unable to allocate 256MB shadow area. Yell at bunnie for making crappy code.\n" );
-    return;
+    return -1;
   }
 
   printf( "last run's burst length was: %d\n", cs0[F(FPGA_R_MEAS_BURST)]);
@@ -595,7 +585,6 @@ int burstread() {
     return -1;
   fpga_read_4k(conn);
 
-  last = 0;
   repeat = 0;
   // now read back from the log
   for( i = 0; i < 1024; i++ ) { // the log is 1024 entries long
@@ -633,7 +622,6 @@ int burstread() {
 	
 	printf( " %01x ", (record >> 16) & 0x7 );
 	printf( " %04x\n", record & 0xFFFF );
-	last = record;
 	repeat = 0;
       } else {
 	repeat++;
