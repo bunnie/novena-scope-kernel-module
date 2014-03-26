@@ -8,6 +8,9 @@ OBJECTS_devmem2=$(SOURCES_devmem2:.c=.o)
 SOURCES_cheezprint=chee-z-print.c
 OBJECTS_cheezprint=$(SOURCES_cheezprint:.c=.o)
 
+SOURCES_consoleprint=consoleprint.c userspace.c
+OBJECTS_consoleprint=$(SOURCES_consoleprint:.c=.o)
+
 SOURCES_generate=generate.c
 OBJECTS_generate=$(SOURCES_generate:.c=.o)
 
@@ -15,10 +18,11 @@ EXEC=novena-scope
 MY_CFLAGS += -Wall -O0 -g `pkg-config libnl-3.0 --cflags` `pkg-config libnl-genl-3.0 --cflags`
 MY_LIBS += `pkg-config libnl-3.0 --libs` `pkg-config libnl-genl-3.0 --libs`
 
-all: $(OBJECTS) $(OBJECTS_devmem2) $(OBJECTS_cheezprint) $(OBJECTS_generate)
+all: $(OBJECTS) $(OBJECTS_devmem2) $(OBJECTS_cheezprint) $(OBJECTS_generate) $(OBJECTS_consoleprint)
 	$(CC) $(LIBS) $(LDFLAGS) $(OBJECTS) $(MY_LIBS) -o $(EXEC)
 	$(CC) $(LIBS) $(LDFLAGS) $(OBJECTS_devmem2) $(MY_LIBS) -o devmem2
 	$(CC) $(LIBS) $(LDFLAGS) $(OBJECTS_cheezprint) $(MY_LIBS) -o chee-z-print
+	$(CC) $(LIBS) $(LDFLAGS) $(OBJECTS_consoleprint) $(MY_LIBS) -o consoleprint
 	$(CC) $(LIBS) $(LDFLAGS) $(OBJECTS_generate) $(MY_LIBS) -o generate
 
 clean:

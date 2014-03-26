@@ -224,13 +224,14 @@ out:
 }
 */
 
-int fpga_read_4k(struct fpga_connection *conn)
+int fpga_read_4k(struct fpga_connection *conn, uint8_t data[4096])
 {
 	struct nl_msg *msg;
-	struct nlmsghdr *hdr;
+	struct nlmsghdr *nhdr;
+	struct genlmsghdr *ghdr;
 	struct sockaddr_nl nla;
 	int ret;
-	void *data;
+	void *d;
 	int datalen;
 
 	msg = fpga_alloc_msg(conn, KOSAGI_CMD_READ);
@@ -246,18 +247,24 @@ int fpga_read_4k(struct fpga_connection *conn)
 	nlmsg_free(msg);
 
 
-	ret = nl_recv(conn->handle, &nla, (unsigned char **)&hdr, NULL);
+	ret = nl_recv(conn->handle, &nla, (unsigned char **)&nhdr, NULL);
 	if (ret < 0) {
 		fprintf(stderr, "Unable to receive data: %s\n", nl_geterror(ret));
 		return ret;
 	}
-	fprintf(stderr, "Received %d bytes\n", ret);
 
-	ret = get_attr(hdr, KOSAGI_ATTR_FPGA_DATA, &data, &datalen);
-	print_hex(data, datalen);
+	ghdr = nlmsg_data(nhdr);
+	d = genlmsg_user_data(ghdr, 0);
+
+	fprintf(stderr, "Received %d bytes\n", genlmsg_len(ghdr));
+	print_hex(d, genlmsg_len(ghdr));
+	/*
+	ret = get_attr(hdr, KOSAGI_ATTR_FPGA_DATA, &d, &datalen);
+	print_hex(d, datalen);
 	fprintf(stderr, "Data length: %d\n", datalen);
+	*/
 
-	free(hdr);
+	free(nhdr);
 	return ret;
 }
 

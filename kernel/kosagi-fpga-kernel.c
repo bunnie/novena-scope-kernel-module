@@ -6,7 +6,8 @@
 
 #include <linux/platform_data/dma-imx.h>
 
-#define IMX6_EIM_CS1_BASE_ADDR 0x0C040000
+#define IMX6_EIM_CS1_BASE_ADDR 0x0c040000
+#define DATA_FIFO_ADDR (IMX6_EIM_CS1_BASE_ADDR + 0xf000)
 
 /* list of valid commands */
 enum kosagi_fpga_commands {
@@ -97,68 +98,13 @@ out:
 	return 0;
 }
 
-#if 0
-static int kosagi_receive_message(const char *msg)
-{
-	struct sk_buff *skb;
-	void *msg_head;
-	int err;
-
-	/*
-	 * Send a message back.
-	 * Allocate some memory, but since the size is not yet known
-	 * use NLMSG_GOODSIZE
-	 */
-	skb = genlmsg_new(NLMSG_GOODSIZE, GFP_KERNEL);
-	if (skb == NULL) {
-		err = -ENOMEM;
-		goto out;
-	}
-
-	/* create the message headers */
-	/* arguments of genlmsg_put:
-	   struct sk_buff *,
-	   int (sending) pid,
-	   int sequence number,
-	   struct genl_family *,
-	   int flags,
-	   u8 command index (why do we need this?)
-	*/
-	msg_head = genlmsg_put(skb, 0, fpga->seq_num++,
-			&kosagi_fpga_family, 0, KOSAGI_CMD_SEND);
-	if (msg_head == NULL) {
-		err = -ENOMEM;
-		goto out;
-	}
-
-	/* add a KOSAGI_ATTR_MESSAGE attribute (actual value to be sent) */
-	err = nla_put_string(skb, KOSAGI_ATTR_MESSAGE, msg);
-	if (err != 0)
-		goto out;
-
-	/* finalize the message */
-	genlmsg_end(skb, msg_head);
-
-	/* send the message back */
-	err = genlmsg_unicast(fpga->net, skb, fpga->snd_portid);
-
-	if (err != 0)
-		goto out;
-
-	return 0;
-
-out:
-	printk("an error occured in kosagi_receive_message: %d\n", err);
-	return 0;
-}
-#endif
-
 static int kosagi_fpga_read(struct sk_buff *skb_2, struct genl_info *info)
 {
 	struct sk_buff *msg;
 	struct nlattr *nla;
-	void *hdr;
-	int ret;
+	void *hdr = NULL;
+	void *data;
+	int ret = 0;
 
 	if (info == NULL) {
 		pr_err("Unable to read: info was NULL\n");
@@ -179,25 +125,11 @@ static int kosagi_fpga_read(struct sk_buff *skb_2, struct genl_info *info)
 		goto err;
 	}
 
-	nla = __nla_reserve(msg, KOSAGI_ATTR_FPGA_DATA, fpga->byte_size);
-	memcpy(nla_data(nla), fpga->byte_area, fpga->byte_size);
+	data = nla_reserve_nohdr(msg, fpga->byte_size);
+	memcpy(data, fpga->byte_area, fpga->byte_size);
 
 	genlmsg_end(msg, hdr);
 
-	u8 *data = nla_data(nla);
-	pr_err("Unicasting message\n");
-	int i;
-	for (i = 0; i < 3; i++) {
-		pr_err("0x%02x 0x%02x 0x%02x 0x%02x "
-			"0x%02x 0x%02x 0x%02x 0x%02x  "
-			"0x%02x 0x%02x 0x%02x 0x%02x "
-			"0x%02x 0x%02x 0x%02x 0x%02x\n",
-			data[0], data[1], data[2], data[3],
-			data[4], data[5], data[6], data[7],
-			data[8], data[9], data[10], data[11],
-			data[12], data[13], data[14], data[15]);
-		data += 16;
-	}
 	return genlmsg_unicast(genl_info_net(info), msg, info->snd_portid);
 
 err:
@@ -238,8 +170,10 @@ static int __init kosagi_fpga_init(void)
 	if (!fpga)
 		goto fail;
 
-	fpga->byte_area = ioremap_wc(IMX6_EIM_CS1_BASE_ADDR, 4096);
-	fpga->byte_size = 2048;
+	fpga->byte_area = ioremap_wc(DATA_FIFO_ADDR, 4096);
+	pr_err("Scope: Remapped 0x%08x to 0x%08x\n",
+			DATA_FIFO_ADDR, fpga->byte_area);
+	fpga->byte_size = 4096;
 
 	return 0;
 	
@@ -252,7 +186,9 @@ static void __exit kosagi_fpga_exit(void)
 {
 	int ret;
 
-	/*unregister the family*/
+	if (fpga->byte_area)
+		iounmap(fpga->byte_area);
+
 	ret = genl_unregister_family(&kosagi_fpga_family);
 	if (ret !=0) {
 		pr_err("Error while unregistering family: %d\n", ret);
