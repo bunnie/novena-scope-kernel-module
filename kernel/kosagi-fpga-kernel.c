@@ -32,8 +32,6 @@ struct kosagi_fpga {
 	void *byte_area;
 	unsigned int byte_size;
 	u8 dma_buffer[4096];
-	u32 snd_portid;
-	struct net *net;
 };
 static struct kosagi_fpga *fpga;
 
@@ -59,14 +57,12 @@ static struct genl_family kosagi_fpga_family = {
 /* receives a message, prints it and sends another message back */
 static int kosagi_fpga_send(struct sk_buff *skb_2, struct genl_info *info)
 {
+#if 0
 	struct nlattr *na;
 	char *mydata;
 
 	if (info == NULL)
 		goto out;
-
-	fpga->snd_portid = info->snd_portid,
-	fpga->net = genl_info_net(info);
 
 	/*
 	 * for each attribute there is an index in info->attrs which points
@@ -90,18 +86,14 @@ static int kosagi_fpga_send(struct sk_buff *skb_2, struct genl_info *info)
 			fpga->dma_buffer[i] = i;
 		memcpy(fpga->byte_area, fpga->dma_buffer, sizeof(fpga->dma_buffer));
 	}
-
-	//kosagi_receive_message("Hello from the kernel");
-	//kosagi_receive_message("Hello again from the kernel");
-
 out:
+#endif
 	return 0;
 }
 
 static int kosagi_fpga_read(struct sk_buff *skb_2, struct genl_info *info)
 {
-	struct sk_buff *msg;
-	struct nlattr *nla;
+	struct sk_buff *buf;
 	void *hdr = NULL;
 	void *data;
 	int ret = 0;
@@ -111,13 +103,13 @@ static int kosagi_fpga_read(struct sk_buff *skb_2, struct genl_info *info)
 		return -EINVAL;
 	}
 
-	msg = genlmsg_new(fpga->byte_size, GFP_KERNEL);
-	if (!msg) {
+	buf = genlmsg_new(fpga->byte_size, GFP_KERNEL);
+	if (!buf) {
 		pr_err("Unable to create new nlmsg\n");
 		return -ENOMEM;
 	}
 
-	hdr = genlmsg_put(msg, info->snd_portid, info->snd_seq,
+	hdr = genlmsg_put(buf, info->snd_portid, info->snd_seq,
 			&kosagi_fpga_family, 0, KOSAGI_CMD_READ);
 	if (!hdr) {
 		pr_err("Unable to put info into genlmsg\n");
@@ -125,16 +117,35 @@ static int kosagi_fpga_read(struct sk_buff *skb_2, struct genl_info *info)
 		goto err;
 	}
 
-	data = nla_reserve_nohdr(msg, fpga->byte_size);
+	data = nla_reserve_nohdr(buf, fpga->byte_size);
 	memcpy(data, fpga->byte_area, fpga->byte_size);
 
-	genlmsg_end(msg, hdr);
+	genlmsg_end(buf, hdr);
 
-	return genlmsg_unicast(genl_info_net(info), msg, info->snd_portid);
+#ifdef DEBUG_PRINT_HEADER
+	{
+		int i;
+		u8 *d;
+		d = (u8 *)data;
+		for (i = 0; i < 64; i += 16)
+			printk("Scope %d: "
+				"%02x %02x %02x %02x %02x %02x %02x %02x  "
+				"%02x %02x %02x %02x %02x %02x %02x %02x\n",
+				i,
+				d[i+0], d[i+1], d[i+2], d[i+3],
+				d[i+4], d[i+5], d[i+6], d[i+7],
+				d[i+8], d[i+9], d[i+10], d[i+11],
+				d[i+12], d[i+13], d[i+14], d[i+15]
+			);
+	}
+#endif
+
+	ret = genlmsg_unicast(genl_info_net(info), buf, info->snd_portid);
+	return ret;
 
 err:
-	if (msg)
-		nlmsg_free(msg);
+	if (buf)
+		nlmsg_free(buf);
 	return ret;
 }
 
@@ -171,7 +182,7 @@ static int __init kosagi_fpga_init(void)
 		goto fail;
 
 	fpga->byte_area = ioremap_wc(DATA_FIFO_ADDR, 4096);
-	pr_err("Scope: Remapped 0x%08x to 0x%08x\n",
+	pr_err("Scope: Remapped 0x%08x to 0x%p\n",
 			DATA_FIFO_ADDR, fpga->byte_area);
 	fpga->byte_size = 4096;
 
@@ -186,8 +197,11 @@ static void __exit kosagi_fpga_exit(void)
 {
 	int ret;
 
-	if (fpga->byte_area)
+	if (fpga->byte_area) {
+		pr_err("Scope: Unmapped 0x%p from 0x%08x\n",
+				fpga->byte_area, DATA_FIFO_ADDR);
 		iounmap(fpga->byte_area);
+	}
 
 	ret = genl_unregister_family(&kosagi_fpga_family);
 	if (ret !=0) {
