@@ -380,7 +380,7 @@ static int fpga_timing_setup(struct spi_device *spi, struct kosagi_fpga *fpga)
 	writel(0x10, fpga->eim_area + IMX6_EIM_WIAR);
 
 	/* Update the memory mappings */
-	regmap_update_bits(fpga->iomuxc_gpr, IOMUXC_GPR1, 0xfff, 0x249);
+	regmap_update_bits(fpga->iomuxc_gpr, IOMUXC_GPR1, 0x3f, 0x249);
 
 	return 0;
 }
@@ -490,11 +490,6 @@ static int kosagi_fpga_probe(struct spi_device *spi)
 	dev_dbg(&spi->dev, "remapped eim 0x%08x to 0x%p\n",
 			IMX6_EIM_BASE_ADDR, fpga->eim_area);
 
-	fpga->byte_area = ioremap_wc(DATA_FIFO_ADDR, 4096);
-	dev_dbg(&spi->dev, "remapped fifo area 0x%08x to 0x%p\n",
-			DATA_FIFO_ADDR, fpga->byte_area);
-	fpga->byte_size = 4096;
-
 	fpga->iomuxc_gpr =
 		syscon_regmap_lookup_by_compatible("fsl,imx6q-iomuxc-gpr");
 	if (IS_ERR(fpga->iomuxc_gpr)) {
@@ -504,6 +499,11 @@ static int kosagi_fpga_probe(struct spi_device *spi)
 	}
 
 	fpga_timing_setup(spi, fpga);
+
+	fpga->byte_area = ioremap_wc(DATA_FIFO_ADDR, 4096);
+	dev_dbg(&spi->dev, "remapped fifo area 0x%08x to 0x%p\n",
+			DATA_FIFO_ADDR, fpga->byte_area);
+	fpga->byte_size = 4096;
 
 	dev_info(&spi->dev, "FPGA version %d.%d\n",
 			fpga->fpga_ctrl[FPGA_R_DDR3_V_MAJOR],
