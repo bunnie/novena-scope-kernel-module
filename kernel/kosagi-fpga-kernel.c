@@ -10,13 +10,25 @@
 #include <linux/firmware.h>
 #include <linux/clk.h>
 #include <linux/io.h>
+#include <linux/regmap.h>
 
 #include <linux/platform_data/dma-imx.h>
+#include <linux/mfd/syscon/imx6q-iomuxc-gpr.h>
+#include <linux/mfd/syscon.h>
 
 #define BITSTREAM_FILENAME "novena_fpga.bit"
 
+#define IMX6_EIM_BASE_ADDR 0x021b8000
+#define IMX6_EIM_CS0_BASE (0x14)
+#define IMX6_EIM_CS1_BASE (0x2c)
+#define IMX6_EIM_CS2_BASE (0x44)
+#define IMX6_EIM_CS3_BASE (0x5c)
+#define IMX6_EIM_WCR (0x90)
+#define IMX6_EIM_WIAR (0x94)
+
 #define IMX6_EIM_CS0_BASE_ADDR 0x08040000
 #define IMX6_EIM_CS1_BASE_ADDR 0x0c040000
+
 #define DATA_FIFO_ADDR (IMX6_EIM_CS1_BASE_ADDR + 0xf000)
 
 #define FPGA_W_TEST0       0
@@ -89,9 +101,13 @@ struct kosagi_fpga {
 	struct pinctrl_state *pins_eim;
 	struct pinctrl_state *pins_gpio;
 	int power_gpio;
+	int reset_gpio;
 
-	__iomem void *byte_area;
-	__iomem u16 *fpga_ctrl;
+	void __iomem *eim_area;
+	void __iomem *byte_area;
+	u16  __iomem *fpga_ctrl;
+	struct regmap *iomuxc_gpr;
+
 	unsigned int byte_size;
 	u8 dma_buffer[4096];
 };
@@ -163,6 +179,7 @@ static void kosagi_trigger_sample(struct kosagi_fpga *fpga)
 	fpga->fpga_ctrl[FPGA_W_ADC_CTL] = 0x0;
 	//udelay(1000);
 	fpga->fpga_ctrl[FPGA_W_ADC_CTL] = 0x1; // start sampling run, fill buffer
+	//udelay(1000);
 }
 
 static void kosagi_trigger_burst(struct kosagi_fpga *fpga)
@@ -269,18 +286,22 @@ static int load_firmware(struct spi_device *spi)
 	int ret;
 	int size;
 	const u8 *data;
+	int chunk_size = 128;
+
 	ret = request_firmware(&fw, BITSTREAM_FILENAME, &spi->dev);
 	if (ret) {
-		dev_err(&spi->dev, "unable to request firmwrae: %d\n", ret);
+		dev_err(&spi->dev, "unable to request firmware: %d\n", ret);
 		goto out;
 	}
 
 	size = fw->size;
 	data = fw->data;
+	dev_dbg(&spi->dev, "loading %d bytes of firmware (in %d-byte chunks)\n",
+			fw->size, chunk_size);
 	while (size > 0 && !ret) {
 		struct spi_transfer t = {
 			.tx_buf         = data,
-			.len            = size > 128 ? 128 : size,
+			.len            = size > chunk_size ? chunk_size : size,
 		};
 		struct spi_message      m;
 
@@ -288,14 +309,80 @@ static int load_firmware(struct spi_device *spi)
 		spi_message_add_tail(&t, &m);
 		ret = spi_sync(spi, &m);
 
-		data += 128;
-		size -= 128;
+		data += chunk_size;
+		size -= chunk_size;
 	}
 
 out:
 	if (fw)
 		release_firmware(fw);
 	return ret;
+}
+
+static int fpga_timing_setup(struct spi_device *spi, struct kosagi_fpga *fpga)
+{
+	struct device_node *np = spi->dev.of_node;
+	u32 values[6];
+	int ret;
+
+	ret = of_property_read_u32_array(np, "kosagi,weim-cs0-timing",
+			values, 6);
+	if (!ret) {
+		int i;
+		dev_dbg(&spi->dev, "setting up cs0 timing\n");
+		for (i = 0; i < 6; i++)
+			writel(values[i], fpga->eim_area + (i * 4)
+				+ IMX6_EIM_CS0_BASE);
+	}
+
+	ret = of_property_read_u32_array(np, "kosagi,weim-cs1-timing",
+			values, 6);
+	if (!ret) {
+		int i;
+		dev_dbg(&spi->dev, "setting up cs1 timing\n");
+		for (i = 0; i < 6; i++)
+			writel(values[i], fpga->eim_area + (i * 4)
+				+ IMX6_EIM_CS1_BASE);
+	}
+
+	ret = of_property_read_u32_array(np, "kosagi,weim-cs2-timing",
+			values, 6);
+	if (!ret) {
+		int i;
+		dev_dbg(&spi->dev, "setting up cs2 timing\n");
+		for (i = 0; i < 6; i++)
+			writel(values[i], fpga->eim_area + (i * 4)
+				+ IMX6_EIM_CS2_BASE);
+	}
+
+	ret = of_property_read_u32_array(np, "kosagi,weim-cs3-timing",
+			values, 6);
+	if (!ret) {
+		int i;
+		dev_dbg(&spi->dev, "setting up cs3 timing\n");
+		for (i = 0; i < 6; i++)
+			writel(values[i], fpga->eim_area + (i * 4)
+				+ IMX6_EIM_CS3_BASE);
+	}
+
+	/*
+	 * EIM_WCR
+	 * BCM = 1   free-run BCLK
+	 * GBCD = 0  divide the burst clock by 1
+	 * add timeout watchdog after 1024 bclk cycles
+	 */
+	writel(0x701, fpga->eim_area + IMX6_EIM_WCR);
+
+	/*
+	 * EIM_WIAR 
+	 * ACLK_EN = 1
+	 */
+	writel(0x10, fpga->eim_area + IMX6_EIM_WIAR);
+
+	/* Update the memory mappings */
+	regmap_update_bits(fpga->iomuxc_gpr, IOMUXC_GPR1, 0xfff, 0x249);
+
+	return 0;
 }
 
 static int kosagi_fpga_probe(struct spi_device *spi)
@@ -357,7 +444,23 @@ static int kosagi_fpga_probe(struct spi_device *spi)
 				ret);
 		goto fail;
 	}
+
+	/* Bring it out of reset */
+	fpga->reset_gpio = of_get_named_gpio(np, "reset-switch", 0);
+	if (!gpio_is_valid(fpga->reset_gpio)) {
+		dev_err(&spi->dev, "unable to find reset-switch gpio\n");
+		goto fail;
+	}
+	ret = devm_gpio_request_one(&spi->dev, fpga->reset_gpio,
+			GPIOF_OUT_INIT_LOW, "fpga reset");
+	if (ret) {
+		dev_err(&spi->dev, "unable to get fpga reset switch: %d\n",
+				ret);
+		goto fail;
+	}
+
 	gpio_set_value(fpga->power_gpio, 1);
+	gpio_set_value(fpga->reset_gpio, 1);
 
 	/* Load firmware */
 	ret = load_firmware(spi);
@@ -371,15 +474,36 @@ static int kosagi_fpga_probe(struct spi_device *spi)
 		goto fail;
 	}
 
+	/* Set up EIM regions */
+	ret = clk_prepare_enable(fpga->eim_slow_clk);
+	if (ret) {
+		dev_err(&spi->dev, "unable to enable eim clock\n");
+		goto fail;
+	}
+
 	/* Map areas */
 	fpga->fpga_ctrl = devm_ioremap(&spi->dev, IMX6_EIM_CS0_BASE_ADDR, 8192);
-	dev_dbg(&spi->dev, "remapped data 0x%08x to 0x%p\n",
+	dev_dbg(&spi->dev, "remapped fpga ctrl 0x%08x to 0x%p\n",
 			IMX6_EIM_CS0_BASE_ADDR, fpga->fpga_ctrl);
 
+	fpga->eim_area = devm_ioremap(&spi->dev, IMX6_EIM_BASE_ADDR, 4096);
+	dev_dbg(&spi->dev, "remapped eim 0x%08x to 0x%p\n",
+			IMX6_EIM_BASE_ADDR, fpga->eim_area);
+
 	fpga->byte_area = ioremap_wc(DATA_FIFO_ADDR, 4096);
-	dev_dbg(&spi->dev, "remapped data 0x%08x to 0x%p\n",
+	dev_dbg(&spi->dev, "remapped fifo area 0x%08x to 0x%p\n",
 			DATA_FIFO_ADDR, fpga->byte_area);
 	fpga->byte_size = 4096;
+
+	fpga->iomuxc_gpr =
+		syscon_regmap_lookup_by_compatible("fsl,imx6q-iomuxc-gpr");
+	if (IS_ERR(fpga->iomuxc_gpr)) {
+		dev_err(&spi->dev, "unable to find iomuxc registers\n");
+		ret = PTR_ERR(fpga->iomuxc_gpr);
+		goto fail;
+	}
+
+	fpga_timing_setup(spi, fpga);
 
 	dev_info(&spi->dev, "FPGA version %d.%d\n",
 			fpga->fpga_ctrl[FPGA_R_DDR3_V_MAJOR],
@@ -391,8 +515,13 @@ static int kosagi_fpga_probe(struct spi_device *spi)
 	return 0;
 	
 fail:
-	if (fpga)
+	genl_unregister_family(&kosagi_fpga_family);
+
+	if (fpga) {
+		if (fpga->byte_area)
+			iounmap(fpga->byte_area);
 		kfree(fpga);
+	}
 	return ret;
 }
 
