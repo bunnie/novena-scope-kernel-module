@@ -19,10 +19,10 @@
 #define BITSTREAM_FILENAME "novena_fpga.bit"
 
 #define IMX6_EIM_BASE_ADDR 0x021b8000
-#define IMX6_EIM_CS0_BASE (0x14)
-#define IMX6_EIM_CS1_BASE (0x2c)
-#define IMX6_EIM_CS2_BASE (0x44)
-#define IMX6_EIM_CS3_BASE (0x5c)
+#define IMX6_EIM_CS0_BASE (0x00)
+#define IMX6_EIM_CS1_BASE (0x18)
+#define IMX6_EIM_CS2_BASE (0x30)
+#define IMX6_EIM_CS3_BASE (0x48)
 #define IMX6_EIM_WCR (0x90)
 #define IMX6_EIM_WIAR (0x94)
 
@@ -187,9 +187,6 @@ static void kosagi_trigger_burst(struct kosagi_fpga *fpga)
 	/* Set burst mode priority */
 	fpga->fpga_ctrl[FPGA_W_DDR3_P3_CMD] |= 0x8000;
 
-	pr_info("last run's burst length was: %d\n",
-			fpga->fpga_ctrl[FPGA_R_MEAS_BURST]);
-
 	fpga->fpga_ctrl[FPGA_W_RBK_PAGE_L] = 0x0;
 	fpga->fpga_ctrl[FPGA_W_RBK_PAGE_H] = 0x0; // read back starting at page 0
 
@@ -286,7 +283,7 @@ static int load_firmware(struct spi_device *spi)
 	int ret;
 	int size;
 	const u8 *data;
-	int chunk_size = 128;
+	int chunk_size = 65536;
 
 	ret = request_firmware(&fw, BITSTREAM_FILENAME, &spi->dev);
 	if (ret) {
