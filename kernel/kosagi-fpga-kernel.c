@@ -4,8 +4,16 @@
 #include <linux/kernel.h>
 #include <linux/dmaengine.h>
 #include <linux/delay.h>
+#include <linux/gpio.h>
+#include <linux/of_gpio.h>
+#include <linux/spi/spi.h>
+#include <linux/firmware.h>
+#include <linux/clk.h>
+#include <linux/io.h>
 
 #include <linux/platform_data/dma-imx.h>
+
+#define BITSTREAM_FILENAME "novena_fpga.bit"
 
 #define IMX6_EIM_CS0_BASE_ADDR 0x08040000
 #define IMX6_EIM_CS1_BASE_ADDR 0x0c040000
@@ -75,18 +83,24 @@ enum kosagi_fpga_attributes {
 #define KOSAGI_ATTR_MAX (__KOSAGI_ATTR_MAX - 1)
 
 struct kosagi_fpga {
-	unsigned int seq_num;
+	struct spi_device *spi;
+	struct clk *lvds_clk, *lvds_switch_clk, *lvds_parent_clk, *eim_slow_clk;
+	struct pinctrl *pinctrl;
+	struct pinctrl_state *pins_eim;
+	struct pinctrl_state *pins_gpio;
+	int power_gpio;
+
 	__iomem void *byte_area;
 	__iomem u16 *fpga_ctrl;
 	unsigned int byte_size;
 	u8 dma_buffer[4096];
 };
-static struct kosagi_fpga *fpga;
+struct kosagi_fpga *g_fpga;
 
 /* mapping of attributes to type */
 static struct nla_policy kosagi_fpga_genl_policy[KOSAGI_ATTR_MAX + 1] = {
 	[KOSAGI_ATTR_FPGA_DATA] = { .type = NLA_BINARY, .len = 4096 },
-	[KOSAGI_ATTR_MESSAGE] = { .type = NLA_NUL_STRING },
+	[KOSAGI_ATTR_MESSAGE]   = { .type = NLA_NUL_STRING },
 };
 
 /* actual family definition */
@@ -139,7 +153,7 @@ out:
 	return 0;
 }
 
-static void kosagi_trigger_sample(void)
+static void kosagi_trigger_sample(struct kosagi_fpga *fpga)
 {
 	fpga->fpga_ctrl[FPGA_W_ADC_SAMPLEN_L] = 0x0;
 	fpga->fpga_ctrl[FPGA_W_ADC_SAMPLEN_H] = 0x1; // capture 64k for now
@@ -147,11 +161,11 @@ static void kosagi_trigger_sample(void)
 	fpga->fpga_ctrl[FPGA_W_ADC_CTL] = 0x0;
 	fpga->fpga_ctrl[FPGA_W_ADC_CTL] = 0x2;
 	fpga->fpga_ctrl[FPGA_W_ADC_CTL] = 0x0;
-	udelay(1000);
+	//udelay(1000);
 	fpga->fpga_ctrl[FPGA_W_ADC_CTL] = 0x1; // start sampling run, fill buffer
 }
 
-static void kosagi_trigger_burst(void)
+static void kosagi_trigger_burst(struct kosagi_fpga *fpga)
 {
 	/* Set burst mode priority */
 	fpga->fpga_ctrl[FPGA_W_DDR3_P3_CMD] |= 0x8000;
@@ -175,9 +189,10 @@ static int kosagi_fpga_read(struct sk_buff *skb_2, struct genl_info *info)
 	void *hdr = NULL;
 	void *data;
 	int ret = 0;
+	struct kosagi_fpga *fpga = g_fpga;
 
-	kosagi_trigger_sample();
-	kosagi_trigger_burst();
+	kosagi_trigger_sample(fpga);
+	kosagi_trigger_burst(fpga);
 
 	if (info == NULL) {
 		pr_err("Unable to read: info was NULL\n");
@@ -248,64 +263,198 @@ struct genl_ops kosagi_genl_ops[] = {
 	},
 };
 
-
-static int __init kosagi_fpga_init(void)
+static int load_firmware(struct spi_device *spi)
 {
+	const struct firmware *fw;
 	int ret;
+	int size;
+	const u8 *data;
+	ret = request_firmware(&fw, BITSTREAM_FILENAME, &spi->dev);
+	if (ret) {
+		dev_err(&spi->dev, "unable to request firmwrae: %d\n", ret);
+		goto out;
+	}
+
+	size = fw->size;
+	data = fw->data;
+	while (size > 0 && !ret) {
+		struct spi_transfer t = {
+			.tx_buf         = data,
+			.len            = size > 128 ? 128 : size,
+		};
+		struct spi_message      m;
+
+		spi_message_init(&m);
+		spi_message_add_tail(&t, &m);
+		ret = spi_sync(spi, &m);
+
+		data += 128;
+		size -= 128;
+	}
+
+out:
+	if (fw)
+		release_firmware(fw);
+	return ret;
+}
+
+static int kosagi_fpga_probe(struct spi_device *spi)
+{
+	struct device_node *np = spi->dev.of_node;
+	struct kosagi_fpga *fpga;
+	int ret;
+
+	fpga = kzalloc(sizeof(*fpga), GFP_KERNEL);
+	if (!fpga) {
+		ret = -ENOMEM;
+		goto fail;
+	}
 
 	ret = genl_register_family_with_ops(&kosagi_fpga_family,
 					    kosagi_genl_ops);
 	if (ret != 0)
 		goto fail;
 
-	fpga = kzalloc(sizeof(*fpga), GFP_KERNEL);
-	if (!fpga)
+	/* Pin control comes first */
+	fpga->pinctrl = devm_pinctrl_get(&spi->dev);
+	fpga->pins_eim = pinctrl_lookup_state(fpga->pinctrl, "state-eim");
+	fpga->pins_gpio = pinctrl_lookup_state(fpga->pinctrl, "state-gpio");
+	ret = pinctrl_select_state(fpga->pinctrl, fpga->pins_eim);
+	if (ret < 0) {
+		dev_err(&spi->dev, "unable to select pinctrl: %d\n", ret);
+		goto fail;
+	}
+
+	/* Set up clocks */
+	fpga->lvds_clk = devm_clk_get(&spi->dev, "lvds");
+	fpga->lvds_switch_clk = devm_clk_get(&spi->dev, "lvds-switch");
+	fpga->lvds_parent_clk = devm_clk_get(&spi->dev, "lvds-parent");
+	fpga->eim_slow_clk = devm_clk_get(&spi->dev, "eim-slow");
+	if (!fpga->lvds_clk || !fpga->lvds_switch_clk
+	|| !fpga->lvds_parent_clk || !fpga->eim_slow_clk) {
+		ret = -EINVAL;
+		dev_err(&spi->dev, "missing clocks\n");
+		goto fail;
+	}
+
+	ret = clk_set_parent(fpga->lvds_clk, fpga->lvds_parent_clk);
+	if (ret) {
+		dev_err(&spi->dev, "unable to set parent clock\n");
+		goto fail;
+	}
+
+	/* Power it up */
+	fpga->power_gpio = of_get_named_gpio(np, "power-switch", 0);
+	if (!gpio_is_valid(fpga->power_gpio)) {
+		dev_err(&spi->dev, "unable to find power-switch gpio\n");
+		goto fail;
+	}
+
+	ret = devm_gpio_request_one(&spi->dev, fpga->power_gpio,
+			GPIOF_OUT_INIT_LOW, "fpga power");
+	if (ret) {
+		dev_err(&spi->dev, "unable to get fpga power switch: %d\n",
+				ret);
+		goto fail;
+	}
+	gpio_set_value(fpga->power_gpio, 1);
+
+	/* Load firmware */
+	ret = load_firmware(spi);
+	if (ret)
 		goto fail;
 
-	fpga->fpga_ctrl = ioremap(IMX6_EIM_CS0_BASE_ADDR, 4096);
-	pr_err("Scope: Remapped data 0x%08x to 0x%p\n",
+	/* Now that firmware is loaded, start the FPGA */
+	ret = clk_prepare_enable(fpga->lvds_switch_clk);
+	if (ret) {
+		dev_err(&spi->dev, "unable to enable lvds clock\n");
+		goto fail;
+	}
+
+	/* Map areas */
+	fpga->fpga_ctrl = devm_ioremap(&spi->dev, IMX6_EIM_CS0_BASE_ADDR, 8192);
+	dev_dbg(&spi->dev, "remapped data 0x%08x to 0x%p\n",
 			IMX6_EIM_CS0_BASE_ADDR, fpga->fpga_ctrl);
 
 	fpga->byte_area = ioremap_wc(DATA_FIFO_ADDR, 4096);
-	pr_err("Scope: Remapped data 0x%08x to 0x%p\n",
+	dev_dbg(&spi->dev, "remapped data 0x%08x to 0x%p\n",
 			DATA_FIFO_ADDR, fpga->byte_area);
 	fpga->byte_size = 4096;
 
-	pr_err("Scope: FPGA version %d.%d\n",
+	dev_info(&spi->dev, "FPGA version %d.%d\n",
 			fpga->fpga_ctrl[FPGA_R_DDR3_V_MAJOR],
 			fpga->fpga_ctrl[FPGA_R_DDR3_V_MINOR]);
+
+	spi_set_drvdata(spi, fpga);
+	g_fpga = fpga;
 
 	return 0;
 	
 fail:
-	pr_err("Unable to load Kosagi FPGA module: %d\n", ret);
-	return -1;
+	if (fpga)
+		kfree(fpga);
+	return ret;
 }
 
-static void __exit kosagi_fpga_exit(void)
+static int kosagi_fpga_remove(struct spi_device *spi)
 {
 	int ret;
+	struct kosagi_fpga *fpga;
+
+	fpga = spi_get_drvdata(spi);
 
 	if (fpga->byte_area) {
-		pr_err("Scope: Unmapped 0x%p from 0x%08x\n",
+		dev_dbg(&spi->dev, "unmapped 0x%p from 0x%08x\n",
 				fpga->byte_area, DATA_FIFO_ADDR);
 		iounmap(fpga->byte_area);
 	}
 
-	if (fpga->fpga_ctrl) {
-		pr_err("Scope: Unmapped 0x%p from 0x%08x\n",
-				fpga->fpga_ctrl, IMX6_EIM_CS0_BASE_ADDR);
-		iounmap(fpga->fpga_ctrl);
-	}
-
 	ret = genl_unregister_family(&kosagi_fpga_family);
 	if (ret !=0) {
-		pr_err("Error while unregistering family: %d\n", ret);
+		dev_err(&spi->dev, "error while unregistering family: %d\n",
+				ret);
 	}
 
 	kfree(fpga);
+	return 0;
 }
 
+static const struct of_device_id kosagi_fpga_dt_ids[] = {
+	{ .compatible = "kosagi,novena-fpga" },
+	{},
+};
+
+static struct spi_driver kosagi_fpga_driver = {
+	.driver = {
+		.name =		"kosagi-fpga",
+		.owner =	THIS_MODULE,
+		.of_match_table	= of_match_ptr(kosagi_fpga_dt_ids),
+	},
+	.probe =        kosagi_fpga_probe,
+	.remove =       kosagi_fpga_remove,
+
+	/* NOTE:  suspend/resume methods are not necessary here.
+	 * We don't do anything except pass the requests to/from
+	 * the underlying controller.  The refrigerator handles
+	 * most issues; the controller driver handles the rest.
+	 */
+};
+
+
+static int __init kosagi_fpga_init(void)
+{
+	int ret;
+	ret = spi_register_driver(&kosagi_fpga_driver);
+	if (ret < 0) {
+		pr_err("unable to load kosagi fpga driver: %d\n", ret);
+	}
+	return ret;
+}
+
+static void __exit kosagi_fpga_exit(void)
+{
+	spi_unregister_driver(&kosagi_fpga_driver);
+}
 
 module_init(kosagi_fpga_init);
 module_exit(kosagi_fpga_exit);
