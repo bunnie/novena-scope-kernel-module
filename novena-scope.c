@@ -388,10 +388,10 @@ void setup_fpga_cs1() {
   // ACLK_EN = 1
   write_kernel_memory( 0x21b8094, 0x10, 0, 4 );
 
-  printf( "resetting CS0 space to 64M and enabling 64M CS1 space.\n" );
+  printf( "resetting CS0 space to 32M and enabling 32M CS1, CS2, CS3 space.\n" );
   write_kernel_memory( 0x20e0004, 
 		       (read_kernel_memory(0x20e0004, 0, 4) & 0xFFFFFFC0) |
-		       0x1B, 0, 4);
+		       0x249, 0, 4);
 
   printf( "done.\n" );
 }
@@ -466,7 +466,8 @@ int analysis1() {
   conn = fpga_open_connection(FAMILY_NAME);
   if (!conn)
     return -1;
-  fpga_read_4k(conn);
+  uint8_t data[4096];
+  fpga_read_4k(conn, data);
 
   repeat = 0;
   // now read back from the log
@@ -583,7 +584,8 @@ int burstread() {
   conn = fpga_open_connection(FAMILY_NAME);
   if (!conn)
     return -1;
-  fpga_read_4k(conn);
+  uint8_t data[8];
+  fpga_read_4k(conn, data);
 
   repeat = 0;
   // now read back from the log

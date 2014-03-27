@@ -165,7 +165,7 @@ static int fpga_send_read_request(struct fpga_connection *conn)
 	return 0;
 }
 
-static int fpga_do_read_request(struct fpga_connection *conn)
+static int fpga_do_read_request(struct fpga_connection *conn, uint8_t data[4096])
 {
 	void *nhdr;
 	struct genlmsghdr *ghdr;
@@ -182,9 +182,7 @@ static int fpga_do_read_request(struct fpga_connection *conn)
 	ghdr = nlmsg_data(nhdr);
 	d = genlmsg_user_data(ghdr, 0);
 
-	fprintf(stderr, "Received data was %d bytes, total %d bytes\n",
-			genlmsg_len(ghdr), ret);
-	print_hex(d, genlmsg_len(ghdr));
+	memcpy(data, d, 4096);
 
 	free(nhdr);
 
@@ -199,7 +197,7 @@ int fpga_read_4k(struct fpga_connection *conn, uint8_t data[4096])
 	if (ret < 0)
 		return ret;
 
-	ret = fpga_do_read_request(conn);
+	ret = fpga_do_read_request(conn, data);
 	if (ret < 0)
 		return ret;
 
