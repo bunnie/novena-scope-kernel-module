@@ -25,6 +25,11 @@ enum kosagi_fpga_commands {
 	KOSAGI_CMD_UNSPEC,
 	KOSAGI_CMD_SEND,
 	KOSAGI_CMD_READ,
+	KOSAGI_CMD_POWER_OFF,
+	KOSAGI_CMD_POWER_ON,
+	KOSAGI_CMD_ASSERT_RESET,
+	KOSAGI_CMD_DEASSERT_RESET,
+	KOSAGI_CMD_TRIGGER_SAMPLE,
 	__KOSAGI_CMD_MAX,
 };
 #define KOSAGI_CMD_MAX (__KOSAGI_CMD_MAX - 1)
@@ -39,6 +44,7 @@ enum kosagi_fpga_attributes {
 #define KOSAGI_ATTR_MAX (__KOSAGI_ATTR_MAX - 1)
 
 static struct kosagi_fpga *g_fpga;
+static int load_firmware(struct spi_device *spi);
 
 /* mapping of attributes to type */
 static struct nla_policy kosagi_fpga_genl_policy[KOSAGI_ATTR_MAX + 1] = {
@@ -96,19 +102,6 @@ out:
 	return 0;
 }
 
-static void kosagi_trigger_sample(struct kosagi_fpga *fpga)
-{
-	fpga->fpga_ctrl[FPGA_W_ADC_SAMPLEN_L] = 0x0;
-	fpga->fpga_ctrl[FPGA_W_ADC_SAMPLEN_H] = 0x1; // capture 64k for now
-
-	fpga->fpga_ctrl[FPGA_W_ADC_CTL] = 0x0;
-	fpga->fpga_ctrl[FPGA_W_ADC_CTL] = 0x2;
-	fpga->fpga_ctrl[FPGA_W_ADC_CTL] = 0x0;
-	//udelay(1000);
-	fpga->fpga_ctrl[FPGA_W_ADC_CTL] = 0x1; // start sampling run, fill buffer
-	//udelay(1000);
-}
-
 static void kosagi_trigger_burst(struct kosagi_fpga *fpga)
 {
 	/* Set burst mode priority */
@@ -132,7 +125,6 @@ static int kosagi_fpga_read(struct sk_buff *skb_2, struct genl_info *info)
 	int ret = 0;
 	struct kosagi_fpga *fpga = g_fpga;
 
-	kosagi_trigger_sample(fpga);
 	kosagi_trigger_burst(fpga);
 
 	if (info == NULL) {
@@ -186,6 +178,57 @@ err:
 	return ret;
 }
 
+static int kosagi_fpga_power_off(struct sk_buff *skb_2, struct genl_info *info)
+{
+	struct kosagi_fpga *fpga = g_fpga;
+	gpio_set_value(fpga->power_gpio, 0);
+	return 0;
+}
+
+static int kosagi_fpga_power_on(struct sk_buff *skb_2, struct genl_info *info)
+{
+	struct kosagi_fpga *fpga = g_fpga;
+	gpio_set_value(fpga->power_gpio, 1);
+	return 0;
+}
+
+static int kosagi_fpga_assert_reset(struct sk_buff *skb_2,
+					  struct genl_info *info)
+{
+	struct kosagi_fpga *fpga = g_fpga;
+	gpio_set_value(fpga->reset_gpio, 0);
+	return 0;
+}
+
+static int kosagi_fpga_deassert_reset(struct sk_buff *skb_2,
+					    struct genl_info *info)
+{
+	struct kosagi_fpga *fpga = g_fpga;
+	int ret;
+
+	gpio_set_value(fpga->reset_gpio, 1);
+	ret = load_firmware(fpga->spi);
+	if (ret)
+		return ret;
+	return 0;
+}
+
+static int kosagi_fpga_trigger_sample(struct sk_buff *skb_2,
+				       struct genl_info *info)
+{
+	struct kosagi_fpga *fpga = g_fpga;
+	fpga->fpga_ctrl[FPGA_W_ADC_SAMPLEN_L] = 0x0;
+	fpga->fpga_ctrl[FPGA_W_ADC_SAMPLEN_H] = 0x1; // capture 64k for now
+
+	fpga->fpga_ctrl[FPGA_W_ADC_CTL] = 0x0;
+	fpga->fpga_ctrl[FPGA_W_ADC_CTL] = 0x2;
+	fpga->fpga_ctrl[FPGA_W_ADC_CTL] = 0x0;
+	udelay(1000);
+	fpga->fpga_ctrl[FPGA_W_ADC_CTL] = 0x1; // start sampling run, fill buffer
+	udelay(1000);
+	return 0;
+}
+
 /* map commands to their corresponding function call */
 struct genl_ops kosagi_genl_ops[] = {
 	{
@@ -193,14 +236,42 @@ struct genl_ops kosagi_genl_ops[] = {
 		.flags	= 0,
 		.policy	= kosagi_fpga_genl_policy,
 		.doit	= kosagi_fpga_send,
-		.dumpit	= NULL,
 	},
 	{
 		.cmd	= KOSAGI_CMD_READ,
 		.flags	= 0,
 		.policy	= kosagi_fpga_genl_policy,
 		.doit	= kosagi_fpga_read,
-		.dumpit	= NULL,
+	},
+	{
+		.cmd	= KOSAGI_CMD_POWER_OFF,
+		.flags	= 0,
+		.policy	= kosagi_fpga_genl_policy,
+		.doit	= kosagi_fpga_power_off,
+	},
+	{
+		.cmd	= KOSAGI_CMD_POWER_ON,
+		.flags	= 0,
+		.policy	= kosagi_fpga_genl_policy,
+		.doit	= kosagi_fpga_power_on,
+	},
+	{
+		.cmd	= KOSAGI_CMD_ASSERT_RESET,
+		.flags	= 0,
+		.policy	= kosagi_fpga_genl_policy,
+		.doit	= kosagi_fpga_assert_reset,
+	},
+	{
+		.cmd	= KOSAGI_CMD_DEASSERT_RESET,
+		.flags	= 0,
+		.policy	= kosagi_fpga_genl_policy,
+		.doit	= kosagi_fpga_deassert_reset,
+	},
+	{
+		.cmd	= KOSAGI_CMD_TRIGGER_SAMPLE,
+		.flags	= 0,
+		.policy	= kosagi_fpga_genl_policy,
+		.doit	= kosagi_fpga_trigger_sample,
 	},
 };
 
@@ -321,6 +392,8 @@ static int kosagi_fpga_probe(struct spi_device *spi)
 		goto fail;
 	}
 
+	fpga->spi = spi;
+
 	ret = genl_register_family_with_ops(&kosagi_fpga_family,
 					    kosagi_genl_ops);
 	if (ret != 0)
@@ -386,7 +459,6 @@ static int kosagi_fpga_probe(struct spi_device *spi)
 	gpio_set_value(fpga->power_gpio, 1);
 	gpio_set_value(fpga->reset_gpio, 1);
 
-	/* Load firmware */
 	ret = load_firmware(spi);
 	if (ret)
 		goto fail;
