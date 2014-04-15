@@ -1,6 +1,16 @@
-novena-fpga-drivers
-===================
+Novena Scope Drivers
+====================
 
-Novena FPGA drivers
+Kernel module for FPGA oscilloscope driver.  This allows for relatively
+high-speed reading from the FPGA over EIM, as well as providing automatic
+setup for the FPGA firmware and IO pinmux.
 
-User-space drivers for Novena FPGA operations. Compatible vith PVT only, do not use with DVT.
+
+Directories
+===========
+
+/ - Kernel drivers are located in the root directory.  Simply type "make".
+
+/userspace - Userspace hacking tools, useful in developing the driver.
+
+/firmware - Firmware files.  Place in /lib/firmware/
