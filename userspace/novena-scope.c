@@ -670,8 +670,8 @@ int main(int argc, char **argv) {
   }
 
   // we're always going to need this, so make it a default call
-  setup_fpga();
-  setup_fpga_cs1();
+  //setup_fpga();
+  //setup_fpga_cs1();
 
   while(argc > 0) {
     if(!strcmp(*argv, "-h")) {
@@ -803,7 +803,7 @@ int main(int argc, char **argv) {
     } else if(!strcmp(*argv, "-adc_dev")) {  // dev routine for ADC
       argc--;
       argv++;
-      ddr3_burst_read();
+      //ddr3_burst_read();
       analysis1();
     } else if(!strcmp(*argv, "-burstread")) {  // simple burst readback routine
       argc--;

@@ -27,8 +27,8 @@ enum kosagi_fpga_commands {
 	KOSAGI_CMD_READ,
 	KOSAGI_CMD_POWER_OFF,
 	KOSAGI_CMD_POWER_ON,
-	KOSAGI_CMD_ASSERT_RESET,
-	KOSAGI_CMD_DEASSERT_RESET,
+	KOSAGI_CMD_FPGA_ASSERT_RESET,
+	KOSAGI_CMD_FPGA_DEASSERT_RESET,
 	KOSAGI_CMD_TRIGGER_SAMPLE,
 	__KOSAGI_CMD_MAX,
 };
@@ -43,8 +43,12 @@ enum kosagi_fpga_attributes {
 };
 #define KOSAGI_ATTR_MAX (__KOSAGI_ATTR_MAX - 1)
 
+/* Here because I can't figure out how to attach context to network calls */
 static struct kosagi_fpga *g_fpga;
+
 static int load_firmware(struct spi_device *spi);
+static int kosagi_fpga_trigger_sample(struct sk_buff *skb_2,
+				      struct genl_info *info);
 
 /* mapping of attributes to type */
 static struct nla_policy kosagi_fpga_genl_policy[KOSAGI_ATTR_MAX + 1] = {
@@ -102,8 +106,9 @@ out:
 	return 0;
 }
 
-static void kosagi_trigger_burst(struct kosagi_fpga *fpga)
+static void kosagi_initiate_transfer(struct kosagi_fpga *fpga)
 {
+	pr_err("Initiating transfer\n");
 	/* Set burst mode priority */
 	fpga->fpga_ctrl[FPGA_W_DDR3_P3_CMD] |= 0x8000;
 
@@ -125,7 +130,8 @@ static int kosagi_fpga_read(struct sk_buff *skb_2, struct genl_info *info)
 	int ret = 0;
 	struct kosagi_fpga *fpga = g_fpga;
 
-	kosagi_trigger_burst(fpga);
+	kosagi_fpga_trigger_sample(skb_2, info);
+	kosagi_initiate_transfer(fpga);
 
 	if (info == NULL) {
 		pr_err("Unable to read: info was NULL\n");
@@ -218,7 +224,7 @@ static int kosagi_fpga_trigger_sample(struct sk_buff *skb_2,
 {
 	struct kosagi_fpga *fpga = g_fpga;
 	fpga->fpga_ctrl[FPGA_W_ADC_SAMPLEN_L] = 0x0;
-	fpga->fpga_ctrl[FPGA_W_ADC_SAMPLEN_H] = 0x1; // capture 64k for now
+	fpga->fpga_ctrl[FPGA_W_ADC_SAMPLEN_H] = 0x1; // Capture 64k of data
 
 	fpga->fpga_ctrl[FPGA_W_ADC_CTL] = 0x0;
 	fpga->fpga_ctrl[FPGA_W_ADC_CTL] = 0x2;
@@ -256,13 +262,13 @@ struct genl_ops kosagi_genl_ops[] = {
 		.doit	= kosagi_fpga_power_on,
 	},
 	{
-		.cmd	= KOSAGI_CMD_ASSERT_RESET,
+		.cmd	= KOSAGI_CMD_FPGA_ASSERT_RESET,
 		.flags	= 0,
 		.policy	= kosagi_fpga_genl_policy,
 		.doit	= kosagi_fpga_assert_reset,
 	},
 	{
-		.cmd	= KOSAGI_CMD_DEASSERT_RESET,
+		.cmd	= KOSAGI_CMD_FPGA_DEASSERT_RESET,
 		.flags	= 0,
 		.policy	= kosagi_fpga_genl_policy,
 		.doit	= kosagi_fpga_deassert_reset,
@@ -374,8 +380,19 @@ static int fpga_timing_setup(struct spi_device *spi, struct kosagi_fpga *fpga)
 	 */
 	writel(0x10, fpga->eim_area + IMX6_EIM_WIAR);
 
-	/* Update the memory mappings */
-	regmap_update_bits(fpga->iomuxc_gpr, IOMUXC_GPR1, 0x3f, 0x249);
+#define CS0_OFFSET 0
+#define CS1_OFFSET 3
+#define CS2_OFFSET 6
+#define CS3_OFFSET 9
+#define CSn_128M ((1 << 0) | (2 << 1))
+#define CSn_64M ((1 << 0) | (1 << 1))
+#define CSn_32M ((1 << 0) | (0 << 1))
+	/* Map CS0 and CS1 (and CS2, due to chip bug) */
+	/* CS0 gets 64MB, CS1 gets 32MB, and CS2 gets 32MB */
+	regmap_update_bits(fpga->iomuxc_gpr, IOMUXC_GPR1, 0x7ff,
+		  (CSn_64M << CS0_OFFSET)
+		| (CSn_32M << CS1_OFFSET)
+		| (CSn_32M << CS2_OFFSET));
 
 	return 0;
 }
@@ -504,6 +521,9 @@ static int kosagi_fpga_probe(struct spi_device *spi)
 	dev_info(&spi->dev, "FPGA version %d.%d\n",
 			fpga->fpga_ctrl[FPGA_R_DDR3_V_MAJOR],
 			fpga->fpga_ctrl[FPGA_R_DDR3_V_MINOR]);
+	dev_info(&spi->dev, "FPGA version (again) %d.%d\n",
+			fpga->fpga_ctrl[FPGA_R_DDR3_V_MAJOR],
+			fpga->fpga_ctrl[FPGA_R_DDR3_V_MINOR]);
 
 	spi_set_drvdata(spi, fpga);
 	g_fpga = fpga;
@@ -557,12 +577,6 @@ static struct spi_driver kosagi_fpga_driver = {
 	},
 	.probe =        kosagi_fpga_probe,
 	.remove =       kosagi_fpga_remove,
-
-	/* NOTE:  suspend/resume methods are not necessary here.
-	 * We don't do anything except pass the requests to/from
-	 * the underlying controller.  The refrigerator handles
-	 * most issues; the controller driver handles the rest.
-	 */
 };
 
 
