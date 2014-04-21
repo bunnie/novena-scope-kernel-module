@@ -20,6 +20,8 @@
 
 #define BITSTREAM_FILENAME "novena_fpga.bit"
 
+//#define DEBUG_PRINT_HEADER
+
 /* list of valid commands */
 enum kosagi_fpga_commands {
 	KOSAGI_CMD_UNSPEC,
@@ -117,6 +119,18 @@ static void kosagi_initiate_transfer(struct kosagi_fpga *fpga)
 
 	fpga->fpga_ctrl[FPGA_W_BURSTLEN] = 0x10; // 16-beat bursts
 
+#if 0
+	if(fpga->fpga_ctrl[FPGA_R_RBK_STAT] != 0x0) {
+	  if( fpga->fpga_ctrl[FPGA_R_RBK_STAT] & 0x2 )
+	    pr_err("  full error\n");
+	  if( fpga->fpga_ctrl[FPGA_R_RBK_STAT] & 0x1 )
+	    pr_err("  empty error\n" );
+	}
+	if( (fpga->fpga_ctrl[FPGA_R_DDR3_P3_STAT] & 0x3) != 0x0) {
+	  printk( "DDR3_P3_stat: %x\n", fpga->fpga_ctrl[FPGA_R_DDR3_P3_STAT] );
+	}
+#endif
+
 	fpga->fpga_ctrl[FPGA_W_RBK_CTL] = RBK_CTL_CLEAR_ERROR | RBK_CTL_INIT;
 	fpga->fpga_ctrl[FPGA_W_RBK_CTL] = 0;
 	fpga->fpga_ctrl[FPGA_W_RBK_CTL] = RBK_CTL_ENABLE; // enable readback machine
@@ -131,6 +145,7 @@ static int kosagi_fpga_read(struct sk_buff *skb_2, struct genl_info *info)
 	struct kosagi_fpga *fpga = g_fpga;
 
 	kosagi_fpga_trigger_sample(skb_2, info);
+
 	kosagi_initiate_transfer(fpga);
 
 	if (info == NULL) {
@@ -176,6 +191,7 @@ static int kosagi_fpga_read(struct sk_buff *skb_2, struct genl_info *info)
 #endif
 
 	ret = genlmsg_unicast(genl_info_net(info), buf, info->snd_portid);
+
 	return ret;
 
 err:
